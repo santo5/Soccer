@@ -7,16 +7,26 @@ using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.EntityFrameworkCore;
 using Soccer.Web.Data;
 using Soccer.Web.Data.Entities;
+using Soccer.Web.Helpers;
+using Soccer.Web.Models;
 
 namespace Soccer.Web.Controllers
 {
     public class TeamsController : Controller
     {
         private readonly DataContext _context;
+        private readonly IConverterHelper _converterHelper;
+        private readonly IImageHelper _imageHelper;
 
-        public TeamsController(DataContext context)
+        public TeamsController(
+            DataContext context,
+            IImageHelper imageHelper,
+            IConverterHelper converterHelper
+)
         {
             _context = context;
+            _converterHelper = converterHelper;
+            _imageHelper = imageHelper;
         }
 
         // GET: Teams
@@ -54,15 +64,40 @@ namespace Soccer.Web.Controllers
         // more details see http://go.microsoft.com/fwlink/?LinkId=317598.
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Create([Bind("Id,Name,LogoPath")] TeamEntity teamEntity)
+        public async Task<IActionResult> Create(TeamViewModel model)
         {
             if (ModelState.IsValid)
             {
-                _context.Add(teamEntity);
-                await _context.SaveChangesAsync();
-                return RedirectToAction(nameof(Index));
+                var path = string.Empty;
+
+                if (model.LogoFile != null)
+                {
+                    path = await _imageHelper.UploadImageAsync(model.LogoFile, "Teams");
+                }
+
+                var team = _converterHelper.ToTeamEntity(model, path, true);
+                _context.Add(team);
+
+                try
+                {
+                    await _context.SaveChangesAsync();
+                    return RedirectToAction(nameof(Index));
+                }
+                catch (Exception ex)
+                {
+                    if (ex.InnerException.Message.Contains("duplicate"))
+                    {
+                        ModelState.AddModelError(string.Empty, "Already there is a record with the same name.");
+                    }
+                    else
+                    {
+                        ModelState.AddModelError(string.Empty, ex.InnerException.Message);
+                    }
+
+                }
+
             }
-            return View(teamEntity);
+            return View(model);
         }
 
         // GET: Teams/Edit/5
@@ -78,7 +113,9 @@ namespace Soccer.Web.Controllers
             {
                 return NotFound();
             }
-            return View(teamEntity);
+            TeamViewModel model = _converterHelper.ToTeamViewModel(teamEntity);
+            return View(model);
+
         }
 
         // POST: Teams/Edit/5
@@ -86,34 +123,44 @@ namespace Soccer.Web.Controllers
         // more details see http://go.microsoft.com/fwlink/?LinkId=317598.
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Edit(int id, [Bind("Id,Name,LogoPath")] TeamEntity teamEntity)
+        public async Task<IActionResult> Edit(int id, TeamViewModel model)
         {
-            if (id != teamEntity.Id)
+            if (id != model.Id)
             {
                 return NotFound();
             }
 
             if (ModelState.IsValid)
             {
+
+                var path = model.LogoPath;
+
+                if (model.LogoFile != null)
+                {
+                    path = await _imageHelper.UploadImageAsync(model.LogoFile, "Teams");
+                }
+
+                TeamEntity team = _converterHelper.ToTeamEntity(model, path, false);
+                _context.Update(team);
+
                 try
                 {
-                    _context.Update(teamEntity);
                     await _context.SaveChangesAsync();
+                    return RedirectToAction(nameof(Index));
                 }
-                catch (DbUpdateConcurrencyException)
+                catch (Exception ex)
                 {
-                    if (!TeamEntityExists(teamEntity.Id))
+                    if (ex.InnerException.Message.Contains("duplicate"))
                     {
-                        return NotFound();
+                        ModelState.AddModelError(string.Empty, $"the team already exists {model.Name}");
                     }
                     else
                     {
-                        throw;
+                        ModelState.AddModelError(string.Empty, ex.InnerException.Message);
                     }
                 }
-                return RedirectToAction(nameof(Index));
             }
-            return View(teamEntity);
+            return View(model);
         }
 
         // GET: Teams/Delete/5
@@ -131,15 +178,6 @@ namespace Soccer.Web.Controllers
                 return NotFound();
             }
 
-            return View(teamEntity);
-        }
-
-        // POST: Teams/Delete/5
-        [HttpPost, ActionName("Delete")]
-        [ValidateAntiForgeryToken]
-        public async Task<IActionResult> DeleteConfirmed(int id)
-        {
-            var teamEntity = await _context.Teams.FindAsync(id);
             _context.Teams.Remove(teamEntity);
             await _context.SaveChangesAsync();
             return RedirectToAction(nameof(Index));
